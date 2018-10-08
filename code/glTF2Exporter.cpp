@@ -700,8 +700,9 @@ void glTF2Exporter::ExportMaterials()
             mat->Get(AI_MATKEY_OPACITY, common.transparency);
             
             int shadingMode;
+            std::string technique = "PHONG";
+
             if (AI_SUCCESS == mat->Get(AI_MATKEY_SHADING_MODEL, shadingMode)) {
-                std::string technique;
                 
                 switch (shadingMode) {
                     case aiShadingMode_Blinn: {
@@ -721,16 +722,17 @@ void glTF2Exporter::ExportMaterials()
                     }
                     break;
                     default: {
-                        technique = "PHONG";
                     }
                     break;
                 }
                 
-                common.technique = technique;
-                
-                if (!exportAsPBRMaterial) {
-                    mAsset->extensionsRequired.at("KHR_materials_common") = true;
-                }
+
+            }
+
+            common.technique = technique;
+
+            if (!exportAsPBRMaterial) {
+                mAsset->extensionsRequired.at("KHR_materials_common") = true;
             }
             
             aiString alphaMode;
