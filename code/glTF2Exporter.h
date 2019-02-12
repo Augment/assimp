@@ -92,7 +92,7 @@ namespace Assimp
         /// Constructor for a specific scene to export
         glTF2Exporter(const char* filename, IOSystem* pIOSystem, const aiScene* pScene,
             const ExportProperties* pProperties, bool binary);
-        ~glTF2Exporter();
+        ~glTF2Exporter(){}
 
     protected:
         void WriteBinaryData(IOStream* outfile, std::size_t sceneLength);
