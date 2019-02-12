@@ -3,7 +3,8 @@
 Open Asset Import Library (assimp)
 ---------------------------------------------------------------------------
 
-Copyright (c) 2006-2017, assimp team
+Copyright (c) 2006-2019, assimp team
+
 
 
 All rights reserved.
@@ -50,46 +51,44 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // internal headers
 #include "FindInvalidDataProcess.h"
 #include "ProcessHelper.h"
-#include "Macros.h"
-#include "Exceptional.h"
-#include "qnan.h"
+
+#include <assimp/Macros.h>
+#include <assimp/Exceptional.h>
+#include <assimp/qnan.h>
 
 using namespace Assimp;
 
 // ------------------------------------------------------------------------------------------------
 // Constructor to be privately used by Importer
 FindInvalidDataProcess::FindInvalidDataProcess()
-    : configEpsilon(0.0)
-{
+: configEpsilon(0.0)
+, mIgnoreTexCoods( false ){
     // nothing to do here
 }
 
 // ------------------------------------------------------------------------------------------------
 // Destructor, private as well
-FindInvalidDataProcess::~FindInvalidDataProcess()
-{
+FindInvalidDataProcess::~FindInvalidDataProcess() {
     // nothing to do here
 }
 
 // ------------------------------------------------------------------------------------------------
 // Returns whether the processing step is present in the given flag field.
-bool FindInvalidDataProcess::IsActive( unsigned int pFlags) const
-{
+bool FindInvalidDataProcess::IsActive( unsigned int pFlags) const {
     return 0 != (pFlags & aiProcess_FindInvalidData);
 }
 
 // ------------------------------------------------------------------------------------------------
 // Setup import configuration
-void FindInvalidDataProcess::SetupProperties(const Importer* pImp)
-{
+void FindInvalidDataProcess::SetupProperties(const Importer* pImp) {
     // Get the current value of AI_CONFIG_PP_FID_ANIM_ACCURACY
     configEpsilon = (0 != pImp->GetPropertyFloat(AI_CONFIG_PP_FID_ANIM_ACCURACY,0.f));
+    mIgnoreTexCoods = pImp->GetPropertyBool(AI_CONFIG_PP_FID_IGNORE_TEXTURECOORDS, false);
 }
 
 // ------------------------------------------------------------------------------------------------
 // Update mesh references in the node graph
-void UpdateMeshReferences(aiNode* node, const std::vector<unsigned int>& meshMapping)
-{
+void UpdateMeshReferences(aiNode* node, const std::vector<unsigned int>& meshMapping) {
     if (node->mNumMeshes)   {
         unsigned int out = 0;
         for (unsigned int a = 0; a < node->mNumMeshes;++a)  {
@@ -115,9 +114,8 @@ void UpdateMeshReferences(aiNode* node, const std::vector<unsigned int>& meshMap
 
 // ------------------------------------------------------------------------------------------------
 // Executes the post processing step on the given imported data.
-void FindInvalidDataProcess::Execute( aiScene* pScene)
-{
-    DefaultLogger::get()->debug("FindInvalidDataProcess begin");
+void FindInvalidDataProcess::Execute( aiScene* pScene) {
+    ASSIMP_LOG_DEBUG("FindInvalidDataProcess begin");
 
     bool out = false;
     std::vector<unsigned int> meshMapping(pScene->mNumMeshes);
@@ -163,24 +161,26 @@ void FindInvalidDataProcess::Execute( aiScene* pScene)
             pScene->mNumMeshes = real;
         }
 
-        DefaultLogger::get()->info("FindInvalidDataProcess finished. Found issues ...");
+        ASSIMP_LOG_INFO("FindInvalidDataProcess finished. Found issues ...");
+    } else {
+        ASSIMP_LOG_DEBUG("FindInvalidDataProcess finished. Everything seems to be OK.");
     }
-    else DefaultLogger::get()->debug("FindInvalidDataProcess finished. Everything seems to be OK.");
 }
 
 // ------------------------------------------------------------------------------------------------
 template <typename T>
-inline const char* ValidateArrayContents(const T* /*arr*/, unsigned int /*size*/,
-    const std::vector<bool>& /*dirtyMask*/, bool /*mayBeIdentical = false*/, bool /*mayBeZero = true*/)
+inline
+const char* ValidateArrayContents(const T* /*arr*/, unsigned int /*size*/,
+        const std::vector<bool>& /*dirtyMask*/, bool /*mayBeIdentical = false*/, bool /*mayBeZero = true*/)
 {
-    return NULL;
+    return nullptr;
 }
 
 // ------------------------------------------------------------------------------------------------
 template <>
-inline const char* ValidateArrayContents<aiVector3D>(const aiVector3D* arr, unsigned int size,
-    const std::vector<bool>& dirtyMask, bool mayBeIdentical , bool mayBeZero )
-{
+inline
+const char* ValidateArrayContents<aiVector3D>(const aiVector3D* arr, unsigned int size,
+        const std::vector<bool>& dirtyMask, bool mayBeIdentical , bool mayBeZero ) {
     bool b = false;
     unsigned int cnt = 0;
     for (unsigned int i = 0; i < size;++i)  {
@@ -202,18 +202,17 @@ inline const char* ValidateArrayContents<aiVector3D>(const aiVector3D* arr, unsi
     if (cnt > 1 && !b && !mayBeIdentical) {
         return "All vectors are identical";
     }
-    return NULL;
+    return nullptr;
 }
 
 // ------------------------------------------------------------------------------------------------
 template <typename T>
-inline bool ProcessArray(T*& in, unsigned int num,const char* name,
-    const std::vector<bool>& dirtyMask, bool mayBeIdentical = false, bool mayBeZero = true)
-{
+inline 
+bool ProcessArray(T*& in, unsigned int num,const char* name,
+        const std::vector<bool>& dirtyMask, bool mayBeIdentical = false, bool mayBeZero = true) {
     const char* err = ValidateArrayContents(in,num,dirtyMask,mayBeIdentical,mayBeZero);
     if (err)    {
-        DefaultLogger::get()->error(std::string("FindInvalidDataProcess fails on mesh ") + name + ": " + err);
-
+        ASSIMP_LOG_ERROR_F( "FindInvalidDataProcess fails on mesh ", name, ": ", err);
         delete[] in;
         in = NULL;
         return true;
@@ -251,23 +250,20 @@ bool EpsilonCompare<aiQuatKey>(const aiQuatKey& n, const aiQuatKey& s, ai_real e
 
 // ------------------------------------------------------------------------------------------------
 template <typename T>
-inline bool AllIdentical(T* in, unsigned int num, ai_real epsilon)
-{
+inline
+bool AllIdentical(T* in, unsigned int num, ai_real epsilon) {
     if (num <= 1) {
         return true;
     }
 
-    if (epsilon > 0.f) {
+    if (fabs(epsilon) > 0.f) {
         for (unsigned int i = 0; i < num-1;++i) {
-
             if (!EpsilonCompare(in[i],in[i+1],epsilon)) {
                 return false;
             }
         }
-    }
-    else {
+    } else {
         for (unsigned int i = 0; i < num-1;++i) {
-
             if (in[i] != in[i+1]) {
                 return false;
             }
@@ -278,10 +274,9 @@ inline bool AllIdentical(T* in, unsigned int num, ai_real epsilon)
 
 // ------------------------------------------------------------------------------------------------
 // Search an animation for invalid content
-void FindInvalidDataProcess::ProcessAnimation (aiAnimation* anim)
-{
+void FindInvalidDataProcess::ProcessAnimation (aiAnimation* anim) {
     // Process all animation channels
-    for (unsigned int a = 0; a < anim->mNumChannels;++a) {
+    for ( unsigned int a = 0; a < anim->mNumChannels; ++a ) {
         ProcessAnimationChannel( anim->mChannels[a]);
     }
 }
@@ -393,24 +388,26 @@ int FindInvalidDataProcess::ProcessMesh (aiMesh* pMesh)
 
     // Process vertex positions
     if (pMesh->mVertices && ProcessArray(pMesh->mVertices, pMesh->mNumVertices, "positions", dirtyMask)) {
-        DefaultLogger::get()->error("Deleting mesh: Unable to continue without vertex positions");
+        ASSIMP_LOG_ERROR("Deleting mesh: Unable to continue without vertex positions");
 
         return 2;
     }
 
     // process texture coordinates
-    for (unsigned int i = 0; i < AI_MAX_NUMBER_OF_TEXTURECOORDS && pMesh->mTextureCoords[i]; ++i) {
-        if (ProcessArray(pMesh->mTextureCoords[i], pMesh->mNumVertices, "uvcoords", dirtyMask)) {
-            pMesh->mNumUVComponents[i] = 0;
+    if (!mIgnoreTexCoods) {
+        for (unsigned int i = 0; i < AI_MAX_NUMBER_OF_TEXTURECOORDS && pMesh->mTextureCoords[i]; ++i) {
+            if (ProcessArray(pMesh->mTextureCoords[i], pMesh->mNumVertices, "uvcoords", dirtyMask)) {
+                pMesh->mNumUVComponents[i] = 0;
 
-            // delete all subsequent texture coordinate sets.
-            for (unsigned int a = i + 1; a < AI_MAX_NUMBER_OF_TEXTURECOORDS; ++a) {
-                delete[] pMesh->mTextureCoords[a];
-                pMesh->mTextureCoords[a] = NULL;
-                pMesh->mNumUVComponents[a] = 0;
+                // delete all subsequent texture coordinate sets.
+                for (unsigned int a = i + 1; a < AI_MAX_NUMBER_OF_TEXTURECOORDS; ++a) {
+                    delete[] pMesh->mTextureCoords[a];
+                    pMesh->mTextureCoords[a] = NULL;
+                    pMesh->mNumUVComponents[a] = 0;
+                }
+
+                ret = true;
             }
-
-            ret = true;
         }
     }
 
@@ -427,13 +424,11 @@ int FindInvalidDataProcess::ProcessMesh (aiMesh* pMesh)
                 aiPrimitiveType_POLYGON  & pMesh->mPrimitiveTypes)
             {
                 // We need to update the lookup-table
-                for (unsigned int m = 0; m < pMesh->mNumFaces;++m)
-                {
-                    const aiFace& f = pMesh->mFaces[m];
+                for (unsigned int m = 0; m < pMesh->mNumFaces;++m) {
+                    const aiFace& f = pMesh->mFaces[ m ];
 
                     if (f.mNumIndices < 3)  {
                         dirtyMask[f.mIndices[0]] = true;
-
                         if (f.mNumIndices == 2) {
                             dirtyMask[f.mIndices[1]] = true;
                         }
@@ -442,7 +437,9 @@ int FindInvalidDataProcess::ProcessMesh (aiMesh* pMesh)
             }
             // Normals, tangents and bitangents are undefined for
             // the whole mesh (and should not even be there)
-            else return ret;
+            else {
+                return ret;
+            }
         }
 
         // Process mesh normals
@@ -464,6 +461,5 @@ int FindInvalidDataProcess::ProcessMesh (aiMesh* pMesh)
     }
     return ret ? 1 : 0;
 }
-
 
 #endif // !! ASSIMP_BUILD_NO_FINDINVALIDDATA_PROCESS

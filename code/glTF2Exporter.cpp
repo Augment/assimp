@@ -2,7 +2,8 @@
 Open Asset Import Library (assimp)
 ----------------------------------------------------------------------
 
-Copyright (c) 2006-2017, assimp team
+Copyright (c) 2006-2019, assimp team
+
 
 All rights reserved.
 
@@ -43,9 +44,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "glTF2Exporter.h"
 
-#include "Exceptional.h"
-#include "StringComparison.h"
-#include "ByteSwapper.h"
+#include <assimp/Exceptional.h>
+#include <assimp/StringComparison.h>
+#include <assimp/ByteSwapper.h>
 
 #include "SplitLargeMeshes.h"
 
@@ -79,6 +80,14 @@ namespace Assimp {
         glTF2Exporter exporter(pFile, pIOSystem, pScene, pProperties, false);
     }
 
+    // ------------------------------------------------------------------------------------------------
+    // Worker function for exporting a scene to GLB. Prototyped and registered in Exporter.cpp
+    void ExportSceneGLB2(const char* pFile, IOSystem* pIOSystem, const aiScene* pScene, const ExportProperties* pProperties)
+    {
+        // invoke the exporter
+        glTF2Exporter exporter(pFile, pIOSystem, pScene, pProperties, true);
+    }
+
 } // end of namespace Assimp
 
 namespace {
@@ -105,9 +114,9 @@ namespace {
     private:
         DataType* _data;
     };
-    
+
     static std::pair<std::vector<float>, std::vector<float>> minMaxElements(void* data, size_t elementCount, ComponentType compType, size_t componentCountIn, size_t componentCountOut){
-        
+
         std::unique_ptr<IDataReader> dataReader;
         switch(compType){
             case ComponentType_BYTE:{
@@ -136,18 +145,18 @@ namespace {
                 break;
             }
         }
-        
+
         std::pair<std::vector<float>, std::vector<float>> minMaxValues;
         auto& minValues = minMaxValues.first;
         auto& maxValues = minMaxValues.second;
         minValues.reserve(componentCountOut);
         maxValues.reserve(componentCountOut);
-        
+
         for (size_t i=0; i<componentCountOut; ++i){
             minValues.push_back(std::numeric_limits<float>::max());
             maxValues.push_back(-std::numeric_limits<float>::max());
         }
-        
+
         float value;
         size_t offset = std::max(componentCountIn - componentCountOut, size_t(0));
         for (size_t i=0; i<elementCount; ++i) {
@@ -163,10 +172,10 @@ namespace {
             }
             dataReader->increment(offset);
         }
-        
+
         return minMaxValues;
     }
-    
+
     class AKeyExtraction {
     public:
         size_t keyCount;
@@ -175,7 +184,7 @@ namespace {
         ComponentType componentType;
         Ref<Accessor>& targetTimeAccessor;
         Ref<Accessor>& targetValueAccessor;
-        
+
         AKeyExtraction(size_t iKeyCount,
                        AttribType::Value& iAttribInType,
                        AttribType::Value& iAttribOutType,
@@ -189,17 +198,17 @@ namespace {
                         componentType(iComponentType),
                         targetTimeAccessor(iTargetTimeAccessor),
                         targetValueAccessor(iTargetValueAccessor) {
-            
+
         }
-        
+
         virtual void* getTimeData() = 0;
         virtual void* getValueData() = 0;
         virtual void extract() = 0;
     };
-    
+
     template <typename DataTypeIn, typename DataTypeOut>
     class KeyExtraction : public AKeyExtraction {
-        
+
     public:
         KeyExtraction(DataTypeIn* iKeyData,
                       size_t iDataCount,
@@ -215,15 +224,15 @@ namespace {
             timeData.resize(iDataCount);
             valueData.resize(iValueDataCount);
         }
-        
+
         void* getTimeData() {
             return timeData.data();
         }
-        
+
         void* getValueData() {
             return valueData.data();
         }
-        
+
         inline void extract() {
             DataTypeIn* key = _keyData;
             for (size_t i = 0, iend = timeData.size(); i < iend; ++i, ++key){
@@ -231,14 +240,14 @@ namespace {
                 valueData[i] = key->mValue;
             }
         }
-        
+
     private:
         DataTypeIn* _keyData;
         double _timeCoef;
         std::vector<float> timeData;
         std::vector<DataTypeOut> valueData;
     };
-    
+
     template<>
     void KeyExtraction<aiQuatKey, float>::extract() {
         aiQuatKey* key = _keyData;
@@ -255,26 +264,18 @@ namespace {
 
 
 glTF2Exporter::glTF2Exporter(const char* filename, IOSystem* pIOSystem, const aiScene* pScene,
-                           const ExportProperties* pProperties, bool /*isBinary*/)
+                           const ExportProperties* pProperties, bool isBinary)
     : mFilename(filename)
     , mIOSystem(pIOSystem)
     , mProperties(pProperties)
 {
-    aiScene* sceneCopy_tmp;
-    SceneCombiner::CopyScene(&sceneCopy_tmp, pScene);
-    std::unique_ptr<aiScene> sceneCopy(sceneCopy_tmp);
-
-    SplitLargeMeshesProcess_Triangle tri_splitter;
-    tri_splitter.SetLimit(0xffff);
-    tri_splitter.Execute(sceneCopy.get());
-
-    SplitLargeMeshesProcess_Vertex vert_splitter;
-    vert_splitter.SetLimit(0xffff);
-    vert_splitter.Execute(sceneCopy.get());
-
-    mScene = sceneCopy.get();
+    mScene = pScene;
 
     mAsset.reset( new Asset( pIOSystem ) );
+
+    if (isBinary) {
+        mAsset->SetAsBinary();
+    }
 
     ExportMetadata();
 
@@ -293,31 +294,36 @@ glTF2Exporter::glTF2Exporter(const char* filename, IOSystem* pIOSystem, const ai
 
     AssetWriter writer(*mAsset);
 
-    writer.WriteFile(filename);
+    if (isBinary) {
+        writer.WriteGLBFile(filename);
+    } else {
+        writer.WriteFile(filename);
+    }
+}
+
+glTF2Exporter::~glTF2Exporter() {
+    // empty
 }
 
 /*
  * Copy a 4x4 matrix from struct aiMatrix to typedef mat4.
  * Also converts from row-major to column-major storage.
  */
-static void CopyValue(const aiMatrix4x4& v, mat4& o)
-{
+static void CopyValue(const aiMatrix4x4& v, mat4& o) {
     o[ 0] = v.a1; o[ 1] = v.b1; o[ 2] = v.c1; o[ 3] = v.d1;
     o[ 4] = v.a2; o[ 5] = v.b2; o[ 6] = v.c2; o[ 7] = v.d2;
     o[ 8] = v.a3; o[ 9] = v.b3; o[10] = v.c3; o[11] = v.d3;
     o[12] = v.a4; o[13] = v.b4; o[14] = v.c4; o[15] = v.d4;
 }
 
-static void CopyValue(const aiMatrix4x4& v, aiMatrix4x4& o)
-{
+static void CopyValue(const aiMatrix4x4& v, aiMatrix4x4& o) {
     o.a1 = v.a1; o.a2 = v.a2; o.a3 = v.a3; o.a4 = v.a4;
     o.b1 = v.b1; o.b2 = v.b2; o.b3 = v.b3; o.b4 = v.b4;
     o.c1 = v.c1; o.c2 = v.c2; o.c3 = v.c3; o.c4 = v.c4;
     o.d1 = v.d1; o.d2 = v.d2; o.d3 = v.d3; o.d4 = v.d4;
 }
 
-static void IdentityMatrix4(mat4& o)
-{
+static void IdentityMatrix4(mat4& o) {
     o[ 0] = 1; o[ 1] = 0; o[ 2] = 0; o[ 3] = 0;
     o[ 4] = 0; o[ 5] = 1; o[ 6] = 0; o[ 7] = 0;
     o[ 8] = 0; o[ 9] = 0; o[10] = 1; o[11] = 0;
@@ -325,9 +331,11 @@ static void IdentityMatrix4(mat4& o)
 }
 
 inline Ref<Accessor> ExportData(Asset& a, std::string& meshName, Ref<Buffer>& buffer,
-    unsigned int count, void* data, AttribType::Value typeIn, AttribType::Value typeOut, ComponentType compType, bool isIndices = false)
+    size_t count, void* data, AttribType::Value typeIn, AttribType::Value typeOut, ComponentType compType, bool isIndices = false)
 {
-    if (!count || !data) return Ref<Accessor>();
+    if (!count || !data) {
+        return Ref<Accessor>();
+    }
 
     unsigned int numCompsIn = AttribType::GetNumComponents(typeIn);
     unsigned int numCompsOut = AttribType::GetNumComponents(typeOut);
@@ -343,7 +351,7 @@ inline Ref<Accessor> ExportData(Asset& a, std::string& meshName, Ref<Buffer>& bu
     // bufferView
     Ref<BufferView> bv = a.bufferViews.Create(a.FindUniqueID(meshName, "view"));
     bv->buffer = buffer;
-    bv->byteOffset = unsigned(offset);
+    bv->byteOffset = offset;
     bv->byteLength = length; //! The target that the WebGL buffer should be bound to.
     bv->byteStride = 0;
     bv->target = isIndices ? BufferViewTarget_ELEMENT_ARRAY_BUFFER : BufferViewTarget_ARRAY_BUFFER;
@@ -450,11 +458,9 @@ void glTF2Exporter::GetMatTex(const aiMaterial* mat, Ref<Texture>& texture, aiTe
             std::string path = tex.C_Str();
 
             if (path.size() > 0) {
-                if (path[0] != '*') {
-                    std::map<std::string, unsigned int>::iterator it = mTexturesByPath.find(path);
-                    if (it != mTexturesByPath.end()) {
-                        texture = mAsset->textures.Get(it->second);
-                    }
+                std::map<std::string, unsigned int>::iterator it = mTexturesByPath.find(path);
+                if (it != mTexturesByPath.end()) {
+                    texture = mAsset->textures.Get(it->second);
                 }
 
                 if (!texture) {
@@ -564,46 +570,46 @@ void glTF2Exporter::ExportMaterials()
         name = mAsset->FindUniqueID(name, "material");
 
         m->name = name;
-        
+
         // The value is true if the material is from common material source or the export option is true
         bool hasCommonSource = false;
         mat->Get(AI_MATKEY_GLTF_COMMON, hasCommonSource);
         bool exportAsCommonMaterial = hasCommonSource || (mProperties->HasPropertyBool(AI_CONFIG_EXPORT_GLTF2_MATERIAL_COMMON) && mProperties->GetPropertyBool(AI_CONFIG_EXPORT_GLTF2_MATERIAL_COMMON));
         // The value is false if the export as a common material is active and the export option is false
         bool exportAsPBRMaterial = !(exportAsCommonMaterial && mProperties->HasPropertyBool(AI_CONFIG_EXPORT_GLTF2_MATERIAL_PBR) && !mProperties->GetPropertyBool(AI_CONFIG_EXPORT_GLTF2_MATERIAL_PBR));
-        
-        
+
+
         if (exportAsPBRMaterial) {
-            
+
             GetMatTex(mat, m->pbrMetallicRoughness.baseColorTexture, AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_BASE_COLOR_TEXTURE);
-            
+
             if (!m->pbrMetallicRoughness.baseColorTexture.texture) {
                 //if there wasn't a baseColorTexture defined in the source, fallback to any diffuse texture
                 GetMatTex(mat, m->pbrMetallicRoughness.baseColorTexture, aiTextureType_DIFFUSE);
                 //exportAsCommonMaterial = exportAsCommonMaterial || !hasPbrSpecularGlossiness;
             }
-            
+
             GetMatTex(mat, m->pbrMetallicRoughness.metallicRoughnessTexture, AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLICROUGHNESS_TEXTURE);
-            
+
             if (GetMatColor(mat, m->pbrMetallicRoughness.baseColorFactor, AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_BASE_COLOR_FACTOR) != AI_SUCCESS) {
                 // if baseColorFactor wasn't defined, then the source is likely not a metallic roughness material.
                 //a fallback to any diffuse color should be used instead
                 GetMatColor(mat, m->pbrMetallicRoughness.baseColorFactor, AI_MATKEY_COLOR_DIFFUSE);
                 //exportAsCommonMaterial = exportAsCommonMaterial || !hasPbrSpecularGlossiness;
             }
-            
+
             if (mat->Get(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLIC_FACTOR, m->pbrMetallicRoughness.metallicFactor) != AI_SUCCESS) {
                 //if metallicFactor wasn't defined, then the source is likely not a PBR file, and the metallicFactor should be 0
                 m->pbrMetallicRoughness.metallicFactor = 0;
                 //exportAsCommonMaterial = exportAsCommonMaterial || !hasPbrSpecularGlossiness;
             }
-            
+
             // get roughness if source is gltf2 file
             if (mat->Get(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_ROUGHNESS_FACTOR, m->pbrMetallicRoughness.roughnessFactor) != AI_SUCCESS) {
                 // otherwise, try to derive and convert from specular + shininess values
                 aiColor4D specularColor;
                 ai_real shininess;
-                
+
                 if (
                     mat->Get(AI_MATKEY_COLOR_SPECULAR, specularColor) == AI_SUCCESS &&
                     mat->Get(AI_MATKEY_SHININESS, shininess) == AI_SUCCESS
@@ -612,12 +618,12 @@ void glTF2Exporter::ExportMaterials()
                     float specularIntensity = specularColor[0] * 0.2125f + specularColor[1] * 0.7154f + specularColor[2] * 0.0721f;
                     //normalize shininess (assuming max is 1000) with an inverse exponentional curve
                     float normalizedShininess = std::sqrt(shininess / 1000);
-                    
+
                     //clamp the shininess value between 0 and 1
                     normalizedShininess = std::min(std::max(normalizedShininess, 0.0f), 1.0f);
                     // low specular intensity values should produce a rough material even if shininess is high.
                     normalizedShininess = normalizedShininess * specularIntensity;
-                    
+
                     m->pbrMetallicRoughness.roughnessFactor = 1 - normalizedShininess;
                 }
             }
@@ -645,64 +651,64 @@ void glTF2Exporter::ExportMaterials()
                 }
             }
         }
-        
+
         if (exportAsPBRMaterial) {
             // Check if the source is a specular glossiness material instead of a metallic roughness material
             bool hasPbrSpecularGlossiness = false;
             mat->Get(AI_MATKEY_GLTF_PBRSPECULARGLOSSINESS, hasPbrSpecularGlossiness);
-            
+
             if (hasPbrSpecularGlossiness) {
-                
+
                 if (!mAsset->extensionsUsed.at("KHR_materials_pbrSpecularGlossiness")) {
                     mAsset->extensionsUsed["KHR_materials_pbrSpecularGlossiness"] = true;
                 }
-                
+
                 PbrSpecularGlossiness pbrSG;
-                
+
                 GetMatColor(mat, pbrSG.diffuseFactor, AI_MATKEY_COLOR_DIFFUSE);
                 GetMatColor(mat, pbrSG.specularFactor, AI_MATKEY_COLOR_SPECULAR);
-                
+
                 if (mat->Get(AI_MATKEY_GLTF_PBRSPECULARGLOSSINESS_GLOSSINESS_FACTOR, pbrSG.glossinessFactor) != AI_SUCCESS) {
                     float shininess;
-                    
+
                     if (mat->Get(AI_MATKEY_SHININESS, shininess)) {
                         pbrSG.glossinessFactor = shininess / 1000;
                     }
                 }
-                
+
                 GetMatTex(mat, pbrSG.diffuseTexture, aiTextureType_DIFFUSE);
                 GetMatTex(mat, pbrSG.specularGlossinessTexture, aiTextureType_SPECULAR);
-                
+
                 m->pbrSpecularGlossiness = Nullable<PbrSpecularGlossiness>(pbrSG);
             }
         }
-        
+
         if (exportAsCommonMaterial) {
-            
+
             if (!mAsset->extensionsUsed.at("KHR_materials_common")) {
                 mAsset->extensionsUsed["KHR_materials_common"] = true;
             }
-            
+
             Common common;
-            
+
             GetMatColor(mat, common.ambientFactor, AI_MATKEY_COLOR_AMBIENT);
             GetMatColor(mat, common.diffuseFactor, AI_MATKEY_COLOR_DIFFUSE);
             GetMatColor(mat, common.emissiveFactor, AI_MATKEY_COLOR_EMISSIVE);
             GetMatColor(mat, common.specularFactor, AI_MATKEY_COLOR_SPECULAR);
-            
+
             GetMatTex(mat, common.ambientTexture, aiTextureType_AMBIENT);
             GetMatTex(mat, common.diffuseTexture, aiTextureType_DIFFUSE);
             GetMatTex(mat, common.emissiveTexture, aiTextureType_EMISSIVE);
             GetMatTex(mat, common.specularTexture, aiTextureType_SPECULAR);
-            
+
             mat->Get(AI_MATKEY_TWOSIDED, common.doubleSided);
             mat->Get(AI_MATKEY_SHININESS, common.shininess);
             mat->Get(AI_MATKEY_OPACITY, common.transparency);
-            
+
             int shadingMode;
             if (AI_SUCCESS == mat->Get(AI_MATKEY_SHADING_MODEL, shadingMode)) {
                 std::string technique;
-                
+
                 switch (shadingMode) {
                     case aiShadingMode_Blinn: {
                         technique = "BLINN";
@@ -725,22 +731,28 @@ void glTF2Exporter::ExportMaterials()
                     }
                     break;
                 }
-                
+
                 common.technique = technique;
-                
+
                 if (!exportAsPBRMaterial) {
                     mAsset->extensionsRequired.at("KHR_materials_common") = true;
                 }
             }
-            
+
             aiString alphaMode;
             if (common.transparency!=1.0f && AI_SUCCESS == mat->Get(AI_MATKEY_GLTF_ALPHAMODE, alphaMode)) {
                 if (aiString("BLEND")==alphaMode) {
                     common.transparent = true;
                 }
             }
-            
+
             m->common = Nullable<Common>(common);
+        }
+
+        bool unlit;
+        if (mat->Get(AI_MATKEY_GLTF_UNLIT, unlit) == AI_SUCCESS && unlit) {
+            mAsset->extensionsUsed.KHR_materials_unlit = true;
+            m->unlit = true;
         }
     }
 }
@@ -857,10 +869,31 @@ void ExportSkin(Asset& mAsset, const aiMesh* aimesh, Ref<Mesh>& meshRef, Ref<Buf
     Mesh::Primitive& p = meshRef->primitives.back();
     Ref<Accessor> vertexJointAccessor = ExportData(mAsset, skinRef->id, bufferRef, aimesh->mNumVertices, vertexJointData, AttribType::VEC4, AttribType::VEC4, ComponentType_FLOAT);
     if ( vertexJointAccessor ) {
+        size_t offset = vertexJointAccessor->bufferView->byteOffset;
+        size_t bytesLen = vertexJointAccessor->bufferView->byteLength;
+        unsigned int s_bytesPerComp= ComponentTypeSize(ComponentType_UNSIGNED_SHORT);
+        unsigned int bytesPerComp = ComponentTypeSize(vertexJointAccessor->componentType);
+        size_t s_bytesLen = bytesLen * s_bytesPerComp / bytesPerComp;
+        Ref<Buffer> buf = vertexJointAccessor->bufferView->buffer;
+        uint8_t* arrys = new uint8_t[bytesLen];
+        unsigned int i = 0;
+        for ( unsigned int j = 0; j <= bytesLen; j += bytesPerComp ){
+            size_t len_p = offset + j;
+            float f_value = *(float *)&buf->GetPointer()[len_p];
+            unsigned short c = static_cast<unsigned short>(f_value);
+            memcpy(&arrys[i*s_bytesPerComp], &c, s_bytesPerComp);
+            ++i;
+        }
+        buf->ReplaceData_joint(offset, bytesLen, arrys, bytesLen);
+        vertexJointAccessor->componentType = ComponentType_UNSIGNED_SHORT;
+        vertexJointAccessor->bufferView->byteLength = s_bytesLen;
+
         p.attributes.joint.push_back( vertexJointAccessor );
+        delete[] arrys;
     }
 
-    Ref<Accessor> vertexWeightAccessor = ExportData(mAsset, skinRef->id, bufferRef, aimesh->mNumVertices, vertexWeightData, AttribType::VEC4, AttribType::VEC4, ComponentType_FLOAT);
+    Ref<Accessor> vertexWeightAccessor = ExportData(mAsset, skinRef->id, bufferRef, aimesh->mNumVertices,
+            vertexWeightData, AttribType::VEC4, AttribType::VEC4, ComponentType_FLOAT);
     if ( vertexWeightAccessor ) {
         p.attributes.weight.push_back( vertexWeightAccessor );
     }
@@ -871,12 +904,7 @@ void ExportSkin(Asset& mAsset, const aiMesh* aimesh, Ref<Mesh>& meshRef, Ref<Buf
 
 void glTF2Exporter::ExportMeshes()
 {
-    // Not for
-    //     using IndicesType = decltype(aiFace::mNumIndices);
-    // But yes for
-    //     using IndicesType = unsigned short;
-    // because "ComponentType_UNSIGNED_SHORT" used for indices. And it's a maximal type according to glTF specification.
-    typedef unsigned short IndicesType;
+    typedef decltype(aiFace::mNumIndices) IndicesType;
 
     std::string fname = std::string(mFilename);
     std::string bufferIdPrefix = fname.substr(0, fname.rfind(".gltf"));
@@ -926,11 +954,21 @@ void glTF2Exporter::ExportMeshes()
 		if (v) p.attributes.position.push_back(v);
 
 		/******************** Normals ********************/
+        // Normalize all normals as the validator can emit a warning otherwise
+        if ( nullptr != aim->mNormals) {
+            for ( auto i = 0u; i < aim->mNumVertices; ++i ) {
+                aim->mNormals[ i ].Normalize();
+            }
+        }
+
 		Ref<Accessor> n = ExportData(*mAsset, meshId, b, aim->mNumVertices, aim->mNormals, AttribType::VEC3, AttribType::VEC3, ComponentType_FLOAT);
-		if (n) p.attributes.normal.push_back(n);
+        if (n) p.attributes.normal.push_back(n);
 
 		/************** Texture coordinates **************/
         for (int i = 0; i < AI_MAX_NUMBER_OF_TEXTURECOORDS; ++i) {
+			if (!aim->HasTextureCoords(i))
+				continue;
+
             // Flip UV y coords
             if (aim -> mNumUVComponents[i] > 1) {
                 for (unsigned int j = 0; j < aim->mNumVertices; ++j) {
@@ -946,6 +984,13 @@ void glTF2Exporter::ExportMeshes()
 			}
 		}
 
+		/*************** Vertex colors ****************/
+		for (unsigned int indexColorChannel = 0; indexColorChannel < aim->GetNumColorChannels(); ++indexColorChannel) {
+			Ref<Accessor> c = ExportData(*mAsset, meshId, b, aim->mNumVertices, aim->mColors[indexColorChannel], AttribType::VEC4, AttribType::VEC4, ComponentType_FLOAT, false);
+			if (c)
+				p.attributes.color.push_back(c);
+		}
+
 		/*************** Vertices indices ****************/
 		if (aim->mNumFaces > 0) {
 			std::vector<IndicesType> indices;
@@ -953,11 +998,11 @@ void glTF2Exporter::ExportMeshes()
             indices.resize(aim->mNumFaces * nIndicesPerFace);
             for (size_t i = 0; i < aim->mNumFaces; ++i) {
                 for (size_t j = 0; j < nIndicesPerFace; ++j) {
-                    indices[i*nIndicesPerFace + j] = uint16_t(aim->mFaces[i].mIndices[j]);
+                    indices[i*nIndicesPerFace + j] = IndicesType(aim->mFaces[i].mIndices[j]);
                 }
             }
 
-			p.indices = ExportData(*mAsset, meshId, b, unsigned(indices.size()), &indices[0], AttribType::SCALAR, AttribType::SCALAR, ComponentType_UNSIGNED_SHORT, true);
+			p.indices = ExportData(*mAsset, meshId, b, indices.size(), &indices[0], AttribType::SCALAR, AttribType::SCALAR, ComponentType_UNSIGNED_INT, true);
 		}
 
         switch (aim->mPrimitiveTypes) {
@@ -986,8 +1031,12 @@ void glTF2Exporter::ExportMeshes()
             CopyValue(inverseBindMatricesData[idx_joint], invBindMatrixData[idx_joint]);
         }
 
-        Ref<Accessor> invBindMatrixAccessor = ExportData(*mAsset, skinName, b, static_cast<unsigned int>(inverseBindMatricesData.size()), invBindMatrixData, AttribType::MAT4, AttribType::MAT4, ComponentType_FLOAT);
-        if (invBindMatrixAccessor) skinRef->inverseBindMatrices = invBindMatrixAccessor;
+        Ref<Accessor> invBindMatrixAccessor = ExportData(*mAsset, skinName, b,
+                static_cast<unsigned int>(inverseBindMatricesData.size()),
+            invBindMatrixData, AttribType::MAT4, AttribType::MAT4, ComponentType_FLOAT);
+        if (invBindMatrixAccessor) {
+            skinRef->inverseBindMatrices = invBindMatrixAccessor;
+        }
 
         // Identity Matrix   =====>  skinRef->bindShapeMatrix
         // Temporary. Hard-coded identity matrix here
@@ -1015,10 +1064,11 @@ void glTF2Exporter::ExportMeshes()
             meshNode->skeletons.push_back(rootJoint);
             meshNode->skin = skinRef;
         }
+        delete[] invBindMatrixData;
     }
 }
 
-//merges a node's multiple meshes (with one primitive each) into one mesh with multiple primitives
+// Merges a node's multiple meshes (with one primitive each) into one mesh with multiple primitives
 void glTF2Exporter::MergeMeshes()
 {
     for (unsigned int n = 0; n < mAsset->nodes.Size(); ++n) {
@@ -1076,6 +1126,8 @@ void glTF2Exporter::MergeMeshes()
 unsigned int glTF2Exporter::ExportNodeHierarchy(const aiNode* n)
 {
     Ref<Node> node = mAsset->nodes.Create(mAsset->FindUniqueID(n->mName.C_Str(), "node"));
+
+    node->name = n->mName.C_Str();
 
     if (!n->mTransformation.IsIdentity()) {
         node->matrix.isPresent = true;
@@ -1191,6 +1243,16 @@ inline void ExtractAnimationData(Asset& mAsset, std::string& animId, Ref<Animati
     }
 }
 
+static void AddSampler(Ref<Animation>& animRef, Ref<Node>& nodeRef, Animation::Sampler& sampler, AnimationPath path)
+{
+      Animation::Channel channel;
+      channel.sampler = static_cast<int>(animRef->samplers.size());
+      channel.target.path = path;
+      channel.target.node = nodeRef;
+      animRef->channels.push_back(channel);
+      animRef->samplers.push_back(sampler);
+}
+
 void glTF2Exporter::ExportAnimations()
 {
     Ref<Buffer> bufferRef = mAsset->buffers.Get(unsigned (0));
@@ -1265,7 +1327,6 @@ void glTF2Exporter::ExportAnimations()
 
     } // End: for-loop mNumAnimations
 }
-
 
 #endif // ASSIMP_BUILD_NO_GLTF_EXPORTER
 #endif // ASSIMP_BUILD_NO_EXPORT
