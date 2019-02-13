@@ -502,7 +502,7 @@ inline size_t Buffer::AppendData(uint8_t* data, size_t length)
 inline void Buffer::Grow(size_t amount)
 {
     if (amount <= 0) return;
-    if (capacity >= byteLength + amout)
+    if (capacity >= byteLength + amount)
     {
         byteLength += amount;
         return;

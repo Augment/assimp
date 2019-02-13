@@ -536,7 +536,7 @@ namespace glTF2
 		//std::string uri; //!< The uri of the buffer. Can be a filepath, a data uri, etc. (required)
 		size_t byteLength; //!< The length of the buffer in bytes. (default: 0)
 		//std::string type; //!< XMLHttpRequest responseType (default: "arraybuffer")
-		size_t capacity = 0;
+		size_t capacity = 0; //!< The capacity of the buffer in bytes. (default: 0)
 
 		Type type;
 
@@ -566,8 +566,6 @@ namespace glTF2
 
 		shared_ptr<uint8_t> mData; //!< Pointer to the data
 		bool mIsSpecial; //!< Set to true for special cases (e.g. the body buffer)
-
-		size_t capacity = 0; //!< The capacity of the buffer in bytes. (default: 0)
 
 		/// \var EncodedRegion_List
 		/// List of encoded regions.
