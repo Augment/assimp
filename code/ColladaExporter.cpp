@@ -181,8 +181,12 @@ namespace {
                     while (time>futureKey->mTime) {
                         ++futureKey;
                     }
-
-                    previousKey = --nextKey;
+                    nextKey = futureKey;
+                    if (keys.cbegin() == nextKey) {
+                        previousKey = &nodeDefaultKey;
+                    } else {
+                        previousKey = nextKey--;
+                    }
                 }
 
                 ai_real coef;
