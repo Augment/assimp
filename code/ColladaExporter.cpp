@@ -76,7 +76,7 @@ void ExportSceneCollada(const char* pFile, IOSystem* pIOSystem, const aiScene* p
 
     // invoke the exporter
     ColladaExporter iDoTheExportThing( pScene, pIOSystem, path, file);
-    
+
     if (iDoTheExportThing.mOutput.fail()) {
         throw DeadlyExportError("output data creation failed. Most likely the file became too large: " + std::string(pFile));
     }
@@ -93,6 +93,140 @@ void ExportSceneCollada(const char* pFile, IOSystem* pIOSystem, const aiScene* p
 
 } // end of namespace Assimp
 
+namespace {
+
+    template <typename T>
+    class IterableArray {
+    public:
+        IterableArray(): _array(nullptr), _size(0){};
+        IterableArray(T* array, size_t size): _array(array), _size(size){};
+        T* begin() const {return {_array};};
+        T const* cbegin() const {return {_array};};
+        T* end() const {return {_size?_array+_size:_array};};
+        T const* cend() const {return {_array+_size};};
+        size_t size() const {return _size;}
+    private:
+        T* _array;
+        size_t _size;
+    };
+
+    template <typename KeyType>
+    struct TimeRange {
+        static double max;
+        ai_real start;
+        ai_real end;
+        TimeRange(): start(0), end(max){}
+        TimeRange(KeyType* keys, size_t size){
+            if (0<size) {
+                start = keys->mTime;
+                end = (keys+size-1)->mTime;
+            }
+        }
+    };
+    template <typename KeyType>
+    double TimeRange<KeyType>::max = 1e20;
+
+    template <typename KeyType>
+    struct AnimKeyInterpolator {
+        IterableArray<KeyType> keys;
+        const KeyType* next;
+        TimeRange<KeyType> timeRange;
+        double duration;
+        KeyType nodeDefaultKey;
+        aiAnimBehaviour interpolationMode;
+        aiAnimBehaviour interpolationModeEnd;
+        Interpolator<typename KeyType::elem_type> interpolator;
+
+        AnimKeyInterpolator(KeyType* keys, size_t count, double animationDuration, const KeyType& nodeAnimKey, const aiAnimBehaviour& preState, const aiAnimBehaviour& postState) {
+            this->keys = IterableArray<KeyType>(keys, count);
+            next = this->keys.begin();
+            timeRange = TimeRange<KeyType>(keys, count);
+            duration = animationDuration;
+            nodeDefaultKey = nodeAnimKey;
+            interpolationMode = preState;
+            interpolationModeEnd = postState;
+        }
+
+        KeyType interpolate(ai_real time) {
+            if (0==keys.size()){
+                return KeyType(time, nodeDefaultKey.mValue);
+            }
+
+            const KeyType *futureKey = next;
+            KeyType interpolatedKey(time, typename KeyType::elem_type());
+
+            if (time==next->mTime) {
+                if (keys.end()!=futureKey){
+                    ++futureKey;
+                    if (keys.end()==futureKey){
+                        nodeDefaultKey.mTime = duration;
+                    }
+                }
+                interpolatedKey.mValue = next->mValue;
+            }
+            else {
+                const KeyType *previousKey = nullptr, *nextKey = nullptr;
+                if (time<timeRange.start){
+                    nodeDefaultKey.mTime = 0.0;
+                    nextKey = next;
+                    previousKey = &nodeDefaultKey;
+                }
+                else if (time>=timeRange.end) {
+                    nodeDefaultKey.mTime = duration;
+                    previousKey = keys.cend()-1;
+                    nextKey = &nodeDefaultKey;
+                    futureKey = next;
+                }
+                else {
+                    while (time>futureKey->mTime) {
+                        ++futureKey;
+                    }
+                    nextKey = futureKey;
+                    if (keys.cbegin() == nextKey) {
+                        previousKey = &nodeDefaultKey;
+                    } else {
+                        previousKey = nextKey--;
+                    }
+                }
+
+                ai_real coef;
+                aiAnimBehaviour interpolation = time<timeRange.end ? interpolationMode : interpolationModeEnd;
+
+                switch (interpolation)
+                {
+                    case aiAnimBehaviour_CONSTANT:
+                    {
+                        coef = (time-previousKey->mTime)<(nextKey->mTime-time) ? 0.0f : 1.0f;
+                        break;
+                    }
+                    case aiAnimBehaviour_STEP:
+                    {
+                        coef = 0.0f;
+                        break;
+                    }
+                    case aiAnimBehaviour_LINEAR:
+                    case aiAnimBehaviour_DEFAULT:
+                    default:
+                    {
+                        coef = (time-static_cast<ai_real>(previousKey->mTime))/(nextKey->mTime-static_cast<ai_real>(previousKey->mTime));
+                        break;
+                    }
+                }
+
+                typename KeyType::elem_type interpolatedValue;
+                interpolator(interpolatedValue, nextKey->mValue, previousKey->mValue, coef);
+                interpolatedKey.mValue = interpolatedValue;
+            }
+
+            next = futureKey;
+            return interpolatedKey;
+        }
+
+        const double& nextTimeKey() const {
+            return keys.cend()!=next ? next->mTime : TimeRange<KeyType>::max;
+        }
+    } ;
+}
 
 
 // ------------------------------------------------------------------------------------------------
@@ -142,7 +276,7 @@ void ColladaExporter::WriteFile()
     WriteControllerLibrary();
 
     WriteSceneLibrary();
-	
+
 	// customized, Writes the animation library
 	WriteAnimationsLibrary();
 
@@ -802,7 +936,7 @@ void ColladaExporter::WriteControllerLibrary()
 {
     mOutput << startstr << "<library_controllers>" << endstr;
     PushTag();
-    
+
     for( size_t a = 0; a < mScene->mNumMeshes; ++a)
         WriteController( a);
 
@@ -857,7 +991,7 @@ void ColladaExporter::WriteController( size_t pIndex)
 
     mOutput << startstr << "<technique_common>" << endstr;
     PushTag();
-    
+
     mOutput << startstr << "<accessor source=\"#" << idstrEscaped << "-skin-joints-array\" count=\"" << mesh->mNumBones << "\" stride=\"" << 1 << "\">" << endstr;
     PushTag();
 
@@ -881,7 +1015,7 @@ void ColladaExporter::WriteController( size_t pIndex)
     WriteFloatArray( idstr + "-skin-bind_poses", FloatType_Mat4x4, (const ai_real*) bind_poses.data(), bind_poses.size() / 16);
 
     bind_poses.clear();
-    
+
     std::vector<ai_real> skin_weights;
     skin_weights.reserve(mesh->mNumVertices * mesh->mNumBones);
     for( size_t i = 0; i < mesh->mNumBones; ++i)
@@ -962,7 +1096,7 @@ void ColladaExporter::WriteController( size_t pIndex)
 
     PopTag();
     mOutput << startstr << "</skin>" << endstr;
-    
+
     PopTag();
     mOutput << startstr << "</controller>" << endstr;
 }
@@ -1246,14 +1380,142 @@ void ColladaExporter::WriteSceneLibrary()
     PopTag();
     mOutput << startstr << "</library_visual_scenes>" << endstr;
 }
+
+// ------------------------------------------------------------------------------------------------
+std::vector<aiNodeAnim> ColladaExporter::PrepareNodeAnimations(const aiAnimation* animation)
+{
+    // result
+    std::vector<aiNodeAnim> sampledNodeAnims;
+
+    if (nullptr==animation) {
+        return sampledNodeAnims;
+    }
+
+    // find all the nodes targeted by an animation
+    static std::unique_ptr<std::map<std::string, aiNode*>> animatedNodes = nullptr;
+
+    if (nullptr==animatedNodes){
+        animatedNodes.reset(new std::map<std::string, aiNode*>());
+        std::set<std::string> nodeAnimNames;
+        for( auto anim = mScene->mAnimations, animEnd = anim+mScene->mNumAnimations; anim!=animEnd; ++anim) {
+            for ( auto nodeAnim = (*anim)->mChannels, nodeAnimEnd = nodeAnim + (*anim)->mNumChannels; nodeAnim!=nodeAnimEnd; ++nodeAnim) {
+               nodeAnimNames.insert((*nodeAnim)->mNodeName.C_Str());
+            }
+        }
+
+        std::map<std::string, aiNode*>* animatedNodesPtr = animatedNodes.get();
+        std::function<void(aiNode*)> findTargetNodes;
+        findTargetNodes = [&findTargetNodes, &nodeAnimNames, &animatedNodesPtr](aiNode* node){
+            if (node){
+                aiString nodeName = node->mName;
+                auto it = nodeAnimNames.find(nodeName.C_Str());
+                if (nodeAnimNames.end()!=it) {
+                    animatedNodesPtr->emplace(*it, node);
+                    nodeAnimNames.erase(it);
+                }
+                if (0<nodeAnimNames.size()) {
+                    for ( auto child = node->mChildren, childEnd = node->mChildren+node->mNumChildren; child!=childEnd; ++child) {
+                        if (0<nodeAnimNames.size()) {
+                            findTargetNodes(*child);
+                        }
+                        else {
+                            break;
+                        }
+                    }
+                }
+            }
+        };
+        findTargetNodes(mScene->mRootNode);
+    }
+
+
+    // prepare all the anim nodes of the given animation
+    if (0 < animation->mNumChannels) {
+
+        // resolve all the node animations which compose the animation
+        for (const auto *nodeAnim = animation->mChannels, *nodeAnimEnd = nodeAnim+animation->mNumChannels; nodeAnim!=nodeAnimEnd; ++ nodeAnim) {
+
+            const aiNodeAnim* nodeAnimation = *nodeAnim;
+            std::vector<aiVectorKey> sampledPositionKeys;
+            std::vector<aiQuatKey> sampledRotationKeys;
+            std::vector<aiVectorKey> sampledScalingKeys;
+            sampledNodeAnims.reserve(animation->mNumChannels);
+
+            auto animatedNodeIt = animatedNodes->find(nodeAnimation->mNodeName.C_Str());
+            if (animatedNodes->end()==animatedNodeIt || (0==nodeAnimation->mNumPositionKeys && 0==nodeAnimation->mNumRotationKeys && 0==nodeAnimation->mNumScalingKeys)) {
+                continue;
+            }
+
+            aiVector3D position, scaling; aiQuaternion rotation;
+            animatedNodeIt->second->mTransformation.Decompose(scaling, rotation, position);
+            aiVectorKey nodePositionKey(0, position), nodeScalingKey(0, scaling);
+            aiQuatKey nodeRotationKey(0, rotation);
+
+            AnimKeyInterpolator<aiVectorKey> positionKeyInterpolator(nodeAnimation->mPositionKeys, nodeAnimation->mNumPositionKeys, animation->mDuration, nodePositionKey, nodeAnimation->mPreState, nodeAnimation->mPostState);
+            AnimKeyInterpolator<aiQuatKey> rotationKeyInterpolator(nodeAnimation->mRotationKeys, nodeAnimation->mNumRotationKeys, animation->mDuration, nodeRotationKey, nodeAnimation->mPreState, nodeAnimation->mPostState);
+            AnimKeyInterpolator<aiVectorKey> scalingKeyInterpolator(nodeAnimation->mScalingKeys, nodeAnimation->mNumScalingKeys, animation->mDuration, nodeScalingKey, nodeAnimation->mPreState, nodeAnimation->mPostState);
+
+
+            // get the first time key (if keys of a specific kind exist, there must be a key at time 0)
+            double startTime = 1e20;
+
+            if (0<positionKeyInterpolator.keys.size()){
+                startTime = std::min(startTime, positionKeyInterpolator.keys.cbegin()->mTime);
+            }
+            if (0<rotationKeyInterpolator.keys.size()){
+                startTime = std::min(startTime, rotationKeyInterpolator.keys.cbegin()->mTime);
+            }
+            if (0<scalingKeyInterpolator.keys.size()){
+                startTime = std::min(startTime, scalingKeyInterpolator.keys.cbegin()->mTime);
+            }
+
+            ai_real time = startTime;
+
+            while ( 1 ){
+                sampledPositionKeys.push_back(positionKeyInterpolator.interpolate(time));
+                sampledRotationKeys.push_back(rotationKeyInterpolator.interpolate(time));
+                sampledScalingKeys.push_back(scalingKeyInterpolator.interpolate(time));
+
+                // find next time value
+                time = std::min(static_cast<ai_real>(positionKeyInterpolator.nextTimeKey()), static_cast<ai_real>(rotationKeyInterpolator.nextTimeKey()));
+                time = std::min(time, static_cast<ai_real>(scalingKeyInterpolator.nextTimeKey()));
+                if (time>animation->mDuration) {
+                    break;
+                }
+            }
+
+            // create the new nodeAnim
+            sampledNodeAnims.push_back(aiNodeAnim());
+            aiNodeAnim& sampledNodeAnim = sampledNodeAnims.back();
+
+            sampledNodeAnim.mNumPositionKeys = static_cast<unsigned int>(sampledPositionKeys.size());
+            sampledNodeAnim.mNumRotationKeys = static_cast<unsigned int>(sampledRotationKeys.size());
+            sampledNodeAnim.mNumScalingKeys = static_cast<unsigned int>(sampledScalingKeys.size());
+            sampledNodeAnim.mPositionKeys = new aiVectorKey[sampledNodeAnim.mNumPositionKeys];
+            sampledNodeAnim.mRotationKeys = new aiQuatKey[sampledNodeAnim.mNumRotationKeys];
+            sampledNodeAnim.mScalingKeys = new aiVectorKey[sampledNodeAnim.mNumScalingKeys];
+            std::move(sampledPositionKeys.begin(), sampledPositionKeys.end(), sampledNodeAnim.mPositionKeys);
+            std::move(sampledRotationKeys.begin(), sampledRotationKeys.end(), sampledNodeAnim.mRotationKeys);
+            std::move(sampledScalingKeys.begin(), sampledScalingKeys.end(), sampledNodeAnim.mScalingKeys);
+            sampledNodeAnim.mPreState = nodeAnimation->mPreState;
+            sampledNodeAnim.mPostState = nodeAnimation->mPostState;
+            sampledNodeAnim.mNodeName = nodeAnimation->mNodeName;
+        }
+    }
+
+    return sampledNodeAnims;
+}
+
+
+
 // ------------------------------------------------------------------------------------------------
 void ColladaExporter::WriteAnimationLibrary(size_t pIndex)
 {
 	const aiAnimation * anim = mScene->mAnimations[pIndex];
-	
+
 	if ( anim->mNumChannels == 0 && anim->mNumMeshChannels == 0 && anim->mNumMorphMeshChannels ==0 )
 		return;
-	
+
 	const std::string animation_name_escaped = XMLEscape( anim->mName.C_Str() );
 	std::string idstr = anim->mName.C_Str();
 	std::string ending = std::string( "AnimId" ) + to_string(pIndex);
@@ -1266,17 +1528,20 @@ void ColladaExporter::WriteAnimationLibrary(size_t pIndex)
 	}
 
 	const std::string idstrEscaped = XMLEscape(idstr);
-	
+
 	mOutput << startstr << "<animation id=\"" + idstrEscaped + "\" name=\"" + animation_name_escaped + "\">" << endstr;
 	PushTag();
 
+    // sample the NodeAnims to build a transformation matrix for each time key
+    auto sampledNodeAnims = PrepareNodeAnimations(anim);
+
     std::string node_idstr;
-	for (size_t a = 0; a < anim->mNumChannels; ++a) {
-		const aiNodeAnim * nodeAnim = anim->mChannels[a];
-		
+    for (auto nodeAnim = sampledNodeAnims.cbegin(), nodeAnimEnd = sampledNodeAnims.cend(); nodeAnim!=nodeAnimEnd; ++nodeAnim) {
+
+
 		// sanity check
 		if ( nodeAnim->mNumPositionKeys != nodeAnim->mNumScalingKeys ||  nodeAnim->mNumPositionKeys != nodeAnim->mNumRotationKeys ) continue;
-		
+
 		{
             node_idstr.clear();
             node_idstr += nodeAnim->mNodeName.data;
@@ -1286,43 +1551,43 @@ void ColladaExporter::WriteAnimationLibrary(size_t pIndex)
 			for( size_t i = 0; i < nodeAnim->mNumPositionKeys; ++i) {
 				frames.push_back(static_cast<ai_real>(nodeAnim->mPositionKeys[i].mTime));
 			}
-			
+
 			WriteFloatArray( node_idstr , FloatType_Time, (const ai_real*) frames.data(), frames.size());
 			frames.clear();
 		}
-		
+
 		{
             node_idstr.clear();
 
             node_idstr += nodeAnim->mNodeName.data;
             node_idstr += std::string("_matrix-output");
-			
+
 			std::vector<ai_real> keyframes;
 			keyframes.reserve(nodeAnim->mNumPositionKeys * 16);
 			for( size_t i = 0; i < nodeAnim->mNumPositionKeys; ++i) {
 				aiVector3D Scaling = nodeAnim->mScalingKeys[i].mValue;
 				aiMatrix4x4 ScalingM;  // identity
 				ScalingM[0][0] = Scaling.x; ScalingM[1][1] = Scaling.y; ScalingM[2][2] = Scaling.z;
-				
+
 				aiQuaternion RotationQ = nodeAnim->mRotationKeys[i].mValue;
 				aiMatrix4x4 s = aiMatrix4x4( RotationQ.GetMatrix() );
 				aiMatrix4x4 RotationM(s.a1, s.a2, s.a3, 0, s.b1, s.b2, s.b3, 0, s.c1, s.c2, s.c3, 0, 0, 0, 0, 1);
-				
+
 				aiVector3D Translation = nodeAnim->mPositionKeys[i].mValue;
 				aiMatrix4x4 TranslationM;	// identity
 				TranslationM[0][3] = Translation.x; TranslationM[1][3] = Translation.y; TranslationM[2][3] = Translation.z;
-				
+
 				// Combine the above transformations
 				aiMatrix4x4 mat = TranslationM * RotationM * ScalingM;
-				
+
 				for( unsigned int j = 0; j < 4; ++j) {
 					keyframes.insert(keyframes.end(), mat[j], mat[j] + 4);
                 }
 			}
-			
+
 			WriteFloatArray( node_idstr, FloatType_Mat4x4, (const ai_real*) keyframes.data(), keyframes.size() / 16);
 		}
-		
+
 		{
 			std::vector<std::string> names;
 			for ( size_t i = 0; i < nodeAnim->mNumPositionKeys; ++i) {
@@ -1331,35 +1596,35 @@ void ColladaExporter::WriteAnimationLibrary(size_t pIndex)
 					|| nodeAnim->mPreState == aiAnimBehaviour_REPEAT
 					) {
 					names.push_back( "LINEAR" );
-				} else if (nodeAnim->mPostState == aiAnimBehaviour_CONSTANT) {
+				} else if (nodeAnim->mPreState == aiAnimBehaviour_STEP || nodeAnim->mPostState == aiAnimBehaviour_CONSTANT) {
 					names.push_back( "STEP" );
 				}
 			}
-			
+
 			const std::string node_idstr = nodeAnim->mNodeName.data + std::string("_matrix-interpolation");
 			std::string arrayId = node_idstr + "-array";
-			
+
 			mOutput << startstr << "<source id=\"" << XMLEscape(node_idstr) << "\">" << endstr;
 			PushTag();
-			
+
 			// source array
 			mOutput << startstr << "<Name_array id=\"" << XMLEscape(arrayId) << "\" count=\"" << names.size() << "\"> ";
 			for( size_t a = 0; a < names.size(); ++a ) {
 				mOutput << names[a] << " ";
             }
 			mOutput << "</Name_array>" << endstr;
-			
+
 			mOutput << startstr << "<technique_common>" << endstr;
 			PushTag();
 
 			mOutput << startstr << "<accessor source=\"#" << XMLEscape(arrayId) << "\" count=\"" << names.size() << "\" stride=\"" << 1 << "\">" << endstr;
 			PushTag();
-			
+
 			mOutput << startstr << "<param name=\"INTERPOLATION\" type=\"name\"></param>" << endstr;
-			
+
 			PopTag();
 			mOutput << startstr << "</accessor>" << endstr;
-			
+
 			PopTag();
 			mOutput << startstr << "</technique_common>" << endstr;
 
@@ -1367,47 +1632,47 @@ void ColladaExporter::WriteAnimationLibrary(size_t pIndex)
 			mOutput << startstr << "</source>" << endstr;
 		}
 	}
-	
+
 	for (size_t a = 0; a < anim->mNumChannels; ++a) {
 		const aiNodeAnim * nodeAnim = anim->mChannels[a];
-		
+
 		{
 		// samplers
 			const std::string node_idstr = nodeAnim->mNodeName.data + std::string("_matrix-sampler");
 			mOutput << startstr << "<sampler id=\"" << XMLEscape(node_idstr) << "\">" << endstr;
 			PushTag();
-			
+
 			mOutput << startstr << "<input semantic=\"INPUT\" source=\"#" << XMLEscape( nodeAnim->mNodeName.data + std::string("_matrix-input") ) << "\"/>" << endstr;
 			mOutput << startstr << "<input semantic=\"OUTPUT\" source=\"#" << XMLEscape( nodeAnim->mNodeName.data + std::string("_matrix-output") ) << "\"/>" << endstr;
 			mOutput << startstr << "<input semantic=\"INTERPOLATION\" source=\"#" << XMLEscape( nodeAnim->mNodeName.data + std::string("_matrix-interpolation") ) << "\"/>" << endstr;
-			
+
 			PopTag();
 			mOutput << startstr << "</sampler>" << endstr;
 		}
 	}
-	
+
 	for (size_t a = 0; a < anim->mNumChannels; ++a) {
 		const aiNodeAnim * nodeAnim = anim->mChannels[a];
-		
+
 		{
 		// channels
 			mOutput << startstr << "<channel source=\"#" << XMLEscape( nodeAnim->mNodeName.data + std::string("_matrix-sampler") ) << "\" target=\"" << XMLEscape(nodeAnim->mNodeName.data) << "/matrix\"/>" << endstr;
 		}
 	}
-	
+
 	PopTag();
 	mOutput << startstr << "</animation>" << endstr;
-	
+
 }
 // ------------------------------------------------------------------------------------------------
 void ColladaExporter::WriteAnimationsLibrary()
 {
 	const std::string scene_name_escaped = XMLEscape(mScene->mRootNode->mName.C_Str());
-	
+
 	if ( mScene->mNumAnimations > 0 ) {
 		mOutput << startstr << "<library_animations>" << endstr;
 		PushTag();
-		
+
 		// start recursive write at the root node
 		for( size_t a = 0; a < mScene->mNumAnimations; ++a)
 			WriteAnimationLibrary( a );
@@ -1437,7 +1702,7 @@ const aiNode * findBoneNode( const aiNode* aNode, const aiBone* bone)
 	if ( aNode && bone && aNode->mName == bone->mName ) {
 		return aNode;
 	}
-	
+
 	if ( aNode && bone ) {
 		for (unsigned int i=0; i < aNode->mNumChildren; ++i) {
 			aiNode * aChild = aNode->mChildren[i];
@@ -1448,7 +1713,7 @@ const aiNode * findBoneNode( const aiNode* aNode, const aiBone* bone)
 			}
 		}
 	}
-	
+
 	return NULL;
 }
 
@@ -1468,7 +1733,7 @@ const aiNode * findSkeletonRootNode( const aiScene* scene, const aiMesh * mesh)
 			}
 		}
 	}
-	
+
 	if ( !topParentBoneNodes.empty() ) {
 		const aiNode * parentBoneNode = *topParentBoneNodes.begin();
 		if ( topParentBoneNodes.size() == 1 ) {
@@ -1480,7 +1745,7 @@ const aiNode * findSkeletonRootNode( const aiScene* scene, const aiMesh * mesh)
 			return parentBoneNode;
 		}
 	}
-	
+
 	return NULL;
 }
 
@@ -1519,7 +1784,7 @@ void ColladaExporter::WriteNode( const aiScene* pScene, aiNode* pNode)
 	} else {
 		mOutput << "id=\"" << node_name_escaped << "\" " << (is_joint ? "sid=\"" + node_name_escaped +"\"": "") ;
 	}
-	
+
     mOutput << " name=\"" << node_name_escaped
             << "\" type=\"" << node_type
             << "\">" << endstr;
@@ -1544,11 +1809,11 @@ void ColladaExporter::WriteNode( const aiScene* pScene, aiNode* pNode)
             break;
         }
     }
-	
+
 	// customized, sid should be 'matrix' to match with loader code.
     //mOutput << startstr << "<matrix sid=\"transform\">";
 	mOutput << startstr << "<matrix sid=\"matrix\">";
-	
+
     mOutput << mat.a1 << " " << mat.a2 << " " << mat.a3 << " " << mat.a4 << " ";
     mOutput << mat.b1 << " " << mat.b2 << " " << mat.b3 << " " << mat.b4 << " ";
     mOutput << mat.c1 << " " << mat.c2 << " " << mat.c3 << " " << mat.c4 << " ";
@@ -1620,7 +1885,7 @@ void ColladaExporter::WriteNode( const aiScene* pScene, aiNode* pNode)
         mOutput << startstr << "</technique_common>" << endstr;
         PopTag();
         mOutput << startstr << "</bind_material>" << endstr;
-        
+
         PopTag();
         if( mesh->mNumBones == 0)
             mOutput << startstr << "</instance_geometry>" << endstr;
