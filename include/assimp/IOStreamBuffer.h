@@ -253,8 +253,19 @@ bool IOStreamBuffer<T>::getNextDataLine( std::vector<T> &buffer, T continuationT
     size_t i = 0;
     for( ;; ) {
         if ( continuationToken == m_cache[ m_cachePos ] ) {
-            continuationFound = true;
-            ++m_cachePos;
+            // Augment Fix
+            // check the next characters until finding a non whitespace character or a line break
+            auto offset = m_cachePos;
+            while (true) {
+                ++offset;
+                if (IsLineEnd(m_cache[ offset ])) { // true line break
+                    ++m_cachePos;
+                    continuationFound = true;
+                    break;
+                } else if (!IsSpace(m_cache[ offset ])) { // just a back slash (= continuation token)
+                    break;
+                }
+            }
         }
         if ( IsLineEnd( m_cache[ m_cachePos ] ) ) {
             if ( !continuationFound ) {
