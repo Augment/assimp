@@ -3,7 +3,7 @@
 Open Asset Import Library (assimp)
 ---------------------------------------------------------------------------
 
-Copyright (c) 2006-2018, assimp team
+Copyright (c) 2006-2019, assimp team
 
 
 
@@ -63,8 +63,28 @@ public:
     }
 };
 
-TEST_F( utSTLImporterExporter, importXFromFileTest ) {
+TEST_F( utSTLImporterExporter, importSTLFromFileTest ) {
     EXPECT_TRUE( importerTest() );
+}
+
+
+TEST_F(utSTLImporterExporter, test_multiple) {
+    // import same file twice, each with its own importer
+    // must work both times and not crash
+    Assimp::Importer importer1;
+    const aiScene *scene1 = importer1.ReadFile( ASSIMP_TEST_MODELS_DIR "/STL/Spider_ascii.stl", aiProcess_ValidateDataStructure );
+    EXPECT_NE(nullptr, scene1);
+
+    Assimp::Importer importer2;
+    const aiScene *scene2 = importer2.ReadFile( ASSIMP_TEST_MODELS_DIR "/STL/Spider_ascii.stl", aiProcess_ValidateDataStructure );
+    EXPECT_NE(nullptr, scene2);
+}
+
+TEST_F(utSTLImporterExporter, importSTLformatdetection) {
+    ::Assimp::Importer importer;
+    const aiScene *scene = importer.ReadFile(ASSIMP_TEST_MODELS_DIR "/STL/formatDetection", aiProcess_ValidateDataStructure);
+
+    EXPECT_NE(nullptr, scene);
 }
 
 TEST_F( utSTLImporterExporter, test_with_two_solids ) {
@@ -132,10 +152,10 @@ TEST_F(utSTLImporterExporter, test_export_pointclouds) {
 
     auto pMesh = scene.mMeshes[0];
 
-    long numValidPoints = points.size();
+    size_t numValidPoints = points.size();
 
     pMesh->mVertices = new aiVector3D[numValidPoints];
-    pMesh->mNumVertices = numValidPoints;
+    pMesh->mNumVertices = static_cast<unsigned int>( numValidPoints );
 
     int i = 0;
     for (XYZ &p : points) {

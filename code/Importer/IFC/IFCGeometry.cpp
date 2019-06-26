@@ -46,17 +46,22 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef ASSIMP_BUILD_NO_IFC_IMPORTER
 #include "IFCUtil.h"
-#include "code/PolyTools.h"
-#include "code/ProcessHelper.h"
+#include "Common/PolyTools.h"
+#include "PostProcessing/ProcessHelper.h"
 
-#include "../contrib/poly2tri/poly2tri/poly2tri.h"
-#include "../contrib/clipper/clipper.hpp"
+#ifdef ASSIMP_USE_HUNTER
+#  include <poly2tri/poly2tri.h>
+#  include <polyclipping/clipper.hpp>
+#else
+#  include "../contrib/poly2tri/poly2tri/poly2tri.h"
+#  include "../contrib/clipper/clipper.hpp"
+#endif
+
 #include <memory>
-
 #include <iterator>
 
 namespace Assimp {
-    namespace IFC {
+namespace IFC {
 
 // ------------------------------------------------------------------------------------------------
 bool ProcessPolyloop(const Schema_2x3::IfcPolyLoop& loop, TempMesh& meshout, ConversionData& /*conv*/)
@@ -317,7 +322,7 @@ void ProcessRevolvedAreaSolid(const Schema_2x3::IfcRevolvedAreaSolid& solid, Tem
 }
 
 // ------------------------------------------------------------------------------------------------
-void ProcessSweptDiskSolid(const Schema_2x3::IfcSweptDiskSolid solid, TempMesh& result, ConversionData& conv)
+void ProcessSweptDiskSolid(const Schema_2x3::IfcSweptDiskSolid &solid, TempMesh& result, ConversionData& conv)
 {
     const Curve* const curve = Curve::Convert(*solid.Directrix, conv);
     if(!curve) {
