@@ -52,6 +52,8 @@ IF(HUNTER_ENABLED)
 ENDIF(HUNTER_ENABLED)
 
 PROJECT( Assimp VERSION 5.0.0 )
+include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+conan_basic_setup()
 
 # All supported options ###############################################
 
