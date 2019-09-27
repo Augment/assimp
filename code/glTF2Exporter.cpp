@@ -273,13 +273,13 @@ glTF2Exporter::glTF2Exporter(const char* filename, IOSystem* pIOSystem, const ai
     SceneCombiner::CopyScene(&sceneCopy_tmp, pScene);
     std::unique_ptr<aiScene> sceneCopy(sceneCopy_tmp);
 
-    SplitLargeMeshesProcess_Triangle tri_splitter;
+    /*SplitLargeMeshesProcess_Triangle tri_splitter;
     tri_splitter.SetLimit(0xffff);
     tri_splitter.Execute(sceneCopy.get());
 
     SplitLargeMeshesProcess_Vertex vert_splitter;
     vert_splitter.SetLimit(0xffff);
-    vert_splitter.Execute(sceneCopy.get());
+    vert_splitter.Execute(sceneCopy.get());*/
 
     mScene = sceneCopy.get();
 
@@ -298,7 +298,7 @@ glTF2Exporter::glTF2Exporter(const char* filename, IOSystem* pIOSystem, const ai
     }
 
     ExportMeshes();
-    MergeMeshes();
+    //MergeMeshes();
 
     ExportScene();
 
