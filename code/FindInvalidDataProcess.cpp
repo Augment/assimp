@@ -290,8 +290,6 @@ void FindInvalidDataProcess::ProcessAnimation (aiAnimation* anim)
 // ------------------------------------------------------------------------------------------------
 void FindInvalidDataProcess::ProcessAnimationChannel (aiNodeAnim* anim)
 {
-    int i = 0;
-
     // ScenePreprocessor's work ...
     ai_assert((0 != anim->mPositionKeys && 0 != anim->mRotationKeys && 0 != anim->mScalingKeys));
 
