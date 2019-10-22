@@ -342,7 +342,7 @@ static void IdentityMatrix4(mat4& o) {
     o[12] = 0; o[13] = 0; o[14] = 0; o[15] = 1;
 }
 
-inline Ref<Accessor> ExportData(Asset& a, std::string& meshName, Ref<Buffer>& buffer,
+inline Ref<Accessor> ExportData(Asset& a, const std::string& meshName, Ref<Buffer>& buffer,
     unsigned int count, void* data, AttribType::Value typeIn, AttribType::Value typeOut, ComponentType compType, bool isIndices = false)
 {
     if (!count || !data) {
@@ -385,6 +385,25 @@ inline Ref<Accessor> ExportData(Asset& a, std::string& meshName, Ref<Buffer>& bu
     acc->WriteData(count, data, numCompsIn*bytesPerComp);
 
     return acc;
+}
+
+template<typename Type, class = typename std::enable_if<std::is_integral<Type>::value>::type>
+inline Ref<Accessor> ExportIndices(std::shared_ptr<Asset>& asset, const aiMesh* mesh, const std::string& meshId, Ref<Buffer>& buffer, ComponentType compType) {
+    if (mesh->mNumFaces > 0) {
+        // std::vector<IndicesType> indices;
+        std::vector<Type> indices;
+        unsigned int nIndicesPerFace = mesh->mFaces[0].mNumIndices;
+        indices.resize(mesh->mNumFaces * nIndicesPerFace);
+        for (size_t i = 0; i < mesh->mNumFaces; ++i) {
+            for (size_t j = 0; j < nIndicesPerFace; ++j) {
+                //indices[i*nIndicesPerFace + j] = uint16_t(aim->mFaces[i].mIndices[j]);
+                indices[i*nIndicesPerFace + j] = Type(mesh->mFaces[i].mIndices[j]);
+            }
+        }
+
+        //p.indices = ExportData(*mAsset, meshId, b, unsigned(indices.size()), &indices[0], AttribType::SCALAR, AttribType::SCALAR, ComponentType_UNSIGNED_SHORT, true);
+        return ExportData(*asset, meshId, buffer, unsigned(indices.size()), &indices[0], AttribType::SCALAR, AttribType::SCALAR, compType, true);
+    }
 }
 
 inline void SetSamplerWrap(SamplerWrap& wrap, aiTextureMapMode map)
@@ -1007,16 +1026,14 @@ void glTF2Exporter::ExportMeshes()
 
 		/*************** Vertices indices ****************/
 		if (aim->mNumFaces > 0) {
-			std::vector<IndicesType> indices;
-			unsigned int nIndicesPerFace = aim->mFaces[0].mNumIndices;
-            indices.resize(aim->mNumFaces * nIndicesPerFace);
-            for (size_t i = 0; i < aim->mNumFaces; ++i) {
-                for (size_t j = 0; j < nIndicesPerFace; ++j) {
-                    indices[i*nIndicesPerFace + j] = uint16_t(aim->mFaces[i].mIndices[j]);
-                }
+            // strict inequalite as max index may be used as primitive restart
+            if (aim->mNumVertices < std::numeric_limits<uint8_t>::max()) {
+                p.indices = ExportIndices<uint8_t>(mAsset, aim, meshId, b, ComponentType_UNSIGNED_BYTE);
+            } else if (aim->mNumVertices < std::numeric_limits<uint16_t>::max()) {
+                p.indices = ExportIndices<uint16_t>(mAsset, aim, meshId, b, ComponentType_UNSIGNED_SHORT);
+            } else {
+                p.indices = ExportIndices<uint32_t>(mAsset, aim, meshId, b, ComponentType_UNSIGNED_INT);
             }
-
-			p.indices = ExportData(*mAsset, meshId, b, unsigned(indices.size()), &indices[0], AttribType::SCALAR, AttribType::SCALAR, ComponentType_UNSIGNED_SHORT, true);
 		}
 
         switch (aim->mPrimitiveTypes) {
