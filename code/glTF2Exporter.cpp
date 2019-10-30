@@ -273,6 +273,8 @@ glTF2Exporter::glTF2Exporter(const char* filename, IOSystem* pIOSystem, const ai
     SceneCombiner::CopyScene(&sceneCopy_tmp, pScene);
     std::unique_ptr<aiScene> sceneCopy(sceneCopy_tmp);
 
+    /* The code is commmented as the proprecess merges all the meshes which use the same material*/
+
     /*SplitLargeMeshesProcess_Triangle tri_splitter;
     tri_splitter.SetLimit(0xffff);
     tri_splitter.Execute(sceneCopy.get());
@@ -298,7 +300,8 @@ glTF2Exporter::glTF2Exporter(const char* filename, IOSystem* pIOSystem, const ai
     }
 
     ExportMeshes();
-    //MergeMeshes();
+    /* The line is commented as the preprocess already merges the meshes*/
+    // MergeMeshes();
 
     ExportScene();
 
@@ -390,19 +393,34 @@ inline Ref<Accessor> ExportData(Asset& a, const std::string& meshName, Ref<Buffe
 template<typename Type, class = typename std::enable_if<std::is_integral<Type>::value>::type>
 inline Ref<Accessor> ExportIndices(std::shared_ptr<Asset>& asset, const aiMesh* mesh, const std::string& meshId, Ref<Buffer>& buffer, ComponentType compType) {
     if (mesh->mNumFaces > 0) {
-        // std::vector<IndicesType> indices;
         std::vector<Type> indices;
         unsigned int nIndicesPerFace = mesh->mFaces[0].mNumIndices;
         indices.resize(mesh->mNumFaces * nIndicesPerFace);
         for (size_t i = 0; i < mesh->mNumFaces; ++i) {
             for (size_t j = 0; j < nIndicesPerFace; ++j) {
-                //indices[i*nIndicesPerFace + j] = uint16_t(aim->mFaces[i].mIndices[j]);
                 indices[i*nIndicesPerFace + j] = Type(mesh->mFaces[i].mIndices[j]);
             }
         }
 
-        //p.indices = ExportData(*mAsset, meshId, b, unsigned(indices.size()), &indices[0], AttribType::SCALAR, AttribType::SCALAR, ComponentType_UNSIGNED_SHORT, true);
         return ExportData(*asset, meshId, buffer, unsigned(indices.size()), &indices[0], AttribType::SCALAR, AttribType::SCALAR, compType, true);
+    }
+    else {
+        return Ref<Accessor>();
+    }
+}
+
+template<typename T>
+static void CleanData(T*& ptr) {
+    delete[] ptr;
+    ptr = nullptr;
+}
+
+static void CleanIndicesData(aiMesh* mesh) {
+    if (mesh->mNumFaces > 0) {
+        for (size_t i = 0, ie = mesh->mNumFaces; i < ie; ++i) {
+            delete[] mesh->mFaces[i].mIndices;
+            mesh->mFaces[i].mIndices = nullptr;
+        }
     }
 }
 
@@ -982,7 +1000,7 @@ void glTF2Exporter::ExportMeshes()
     //----------------------------------------
 
 	for (unsigned int idx_mesh = 0; idx_mesh < mScene->mNumMeshes; ++idx_mesh) {
-		const aiMesh* aim = mScene->mMeshes[idx_mesh];
+        aiMesh* aim = mScene->mMeshes[idx_mesh];
 
         std::string name = aim->mName.C_Str();
 
@@ -999,6 +1017,8 @@ void glTF2Exporter::ExportMeshes()
         Ref<Accessor> v = ExportData(*mAsset, meshId, b, aim->mNumVertices, aim->mVertices, AttribType::VEC3, AttribType::VEC3, ComponentType_FLOAT);
 		if (v) p.attributes.position.push_back(v);
 
+        CleanData(aim->mVertices);
+
 		/******************** Normals ********************/
         // Normalize all normals as the validator can emit a warning otherwise
         if ( nullptr != aim->mNormals) {
@@ -1008,7 +1028,11 @@ void glTF2Exporter::ExportMeshes()
         }
 
 		Ref<Accessor> n = ExportData(*mAsset, meshId, b, aim->mNumVertices, aim->mNormals, AttribType::VEC3, AttribType::VEC3, ComponentType_FLOAT);
-        if (n) p.attributes.normal.push_back(n);
+        if (n) {
+            p.attributes.normal.push_back(n);
+
+            CleanData(aim->mNormals);
+        }
 
 		/************** Texture coordinates **************/
         for (int i = 0; i < AI_MAX_NUMBER_OF_TEXTURECOORDS; ++i) {
@@ -1023,7 +1047,11 @@ void glTF2Exporter::ExportMeshes()
                 AttribType::Value type = (aim->mNumUVComponents[i] == 2) ? AttribType::VEC2 : AttribType::VEC3;
 
 				Ref<Accessor> tc = ExportData(*mAsset, meshId, b, aim->mNumVertices, aim->mTextureCoords[i], AttribType::VEC3, type, ComponentType_FLOAT, false);
-				if (tc) p.attributes.texcoord.push_back(tc);
+                if (tc) {
+                    p.attributes.texcoord.push_back(tc);
+
+                    CleanData(aim->mTextureCoords[i]);
+                }
 			}
 		}
 
@@ -1031,8 +1059,11 @@ void glTF2Exporter::ExportMeshes()
 		for (unsigned int indexColorChannel = 0; indexColorChannel < aim->GetNumColorChannels(); ++indexColorChannel)
 		{
 			Ref<Accessor> c = ExportData(*mAsset, meshId, b, aim->mNumVertices, aim->mColors[indexColorChannel], AttribType::VEC4, AttribType::VEC4, ComponentType_FLOAT, false);
-			if (c)
+            if (c) {
 				p.attributes.color.push_back(c);
+
+                CleanData(aim->mColors[indexColorChannel]);
+            }
 		}
 
 		/*************** Vertices indices ****************/
@@ -1046,6 +1077,8 @@ void glTF2Exporter::ExportMeshes()
                 p.indices = ExportIndices<uint32_t>(mAsset, aim, meshId, b, ComponentType_UNSIGNED_INT);
             }
 		}
+
+        CleanIndicesData(aim);
 
         switch (aim->mPrimitiveTypes) {
             case aiPrimitiveType_POLYGON:
