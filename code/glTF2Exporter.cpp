@@ -948,6 +948,17 @@ void glTF2Exporter::ExportMeshes()
     Ref<Buffer> b = mAsset->GetBodyBuffer();
     if (!b) {
        b = mAsset->buffers.Create(bufferId);
+
+        // evaluate approximate size
+        size_t byteLength = 0;
+        size_t averageComponentCount = 4; // vertices + normals + uvs + indices
+        size_t averageComponentTypeByteCount = 3; // vec3 (indices = triangles)
+        size_t floatTypeByteCount = 4;
+        float margin = 1.2;
+        for (aiMesh **mesh = mScene->mMeshes, **meshEnd = mScene->mMeshes + mScene->mNumMeshes; mesh!=meshEnd; ++mesh) {
+            byteLength += size_t(margin * (*mesh)->mNumVertices * averageComponentCount * (averageComponentTypeByteCount *  floatTypeByteCount));
+        }
+        b->Reserve(byteLength);
     }
 
     //----------------------------------------

@@ -325,7 +325,7 @@ Ref<T> LazyDict<T>::Create(const char* id)
 
 
 inline Buffer::Buffer()
-	: byteLength(0), type(Type_arraybuffer), EncodedRegion_Current(nullptr), mIsSpecial(false)
+	: byteLength(0), reservedByteLength(0), type(Type_arraybuffer), EncodedRegion_Current(nullptr), mIsSpecial(false)
 { }
 
 inline Buffer::~Buffer()
@@ -517,12 +517,24 @@ inline size_t Buffer::AppendData(uint8_t* data, size_t length)
     return offset;
 }
 
+inline void Buffer::Reserve(size_t length) {
+    if (length > reservedByteLength) {
+        reservedByteLength = length;
+        uint8_t* b = new uint8_t[reservedByteLength];
+        if (mData) memcpy(b, mData.get(), byteLength);
+        mData.reset(b, std::default_delete<uint8_t[]>());
+    }
+}
+
 inline void Buffer::Grow(size_t amount)
 {
     if (amount <= 0) return;
-    uint8_t* b = new uint8_t[byteLength + amount];
-    if (mData) memcpy(b, mData.get(), byteLength);
-    mData.reset(b, std::default_delete<uint8_t[]>());
+    if ((byteLength + amount) > reservedByteLength) {
+        reservedByteLength = (byteLength + amount) * 1.2;
+        uint8_t* b = new uint8_t[reservedByteLength];
+        if (mData) memcpy(b, mData.get(), byteLength);
+        mData.reset(b, std::default_delete<uint8_t[]>());
+    }
     byteLength += amount;
 }
 

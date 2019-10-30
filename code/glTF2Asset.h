@@ -517,6 +517,7 @@ namespace glTF2
 
 		//std::string uri; //!< The uri of the buffer. Can be a filepath, a data uri, etc. (required)
 		size_t byteLength; //!< The length of the buffer in bytes. (default: 0)
+        size_t reservedByteLength;
 		//std::string type; //!< XMLHttpRequest responseType (default: "arraybuffer")
 
 		Type type;
@@ -588,6 +589,7 @@ namespace glTF2
 		bool ReplaceData_joint(const size_t pBufferData_Offset, const size_t pBufferData_Count, const uint8_t* pReplace_Data, const size_t pReplace_Count);
 
         size_t AppendData(uint8_t* data, size_t length);
+        void Reserve(size_t length);
         void Grow(size_t amount);
 
         uint8_t* GetPointer()
